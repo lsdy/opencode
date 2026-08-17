@@ -1,0 +1,128 @@
+name: Apply v1.14.48 message ID wrap backport
+
+on:
+  push:
+    branches:
+      - fix/v1.14.48-message-id-wrap
+
+permissions:
+  contents: write
+
+jobs:
+  apply-backport:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v1.14.48-message-id-wrap
+          fetch-depth: 0
+
+      - name: Apply minimal source fix and regression test
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          prompt_path = Path("packages/opencode/src/session/prompt.ts")
+          prompt = prompt_path.read_text(encoding="utf-8")
+          old = "            lastUser.id < lastAssistant.id\n"
+          new = "            lastAssistant.parentID === lastUser.id\n"
+          count = prompt.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one legacy completion predicate, found {count}")
+          prompt_path.write_text(prompt.replace(old, new, 1), encoding="utf-8")
+
+          test_path = Path("packages/opencode/test/session/prompt.test.ts")
+          tests = test_path.read_text(encoding="utf-8")
+          title = 'loop continues for newer user when message IDs wrap'
+          marker = 'it.live("loop calls LLM and returns assistant message", () =>'
+          if marker not in tests:
+              raise SystemExit("prompt test insertion marker not found")
+          if title not in tests:
+              block = r'''it.live("loop continues for newer user when message IDs wrap", () =>
+            provideTmpdirServer(
+              Effect.fnUntraced(function* ({ llm }) {
+                const prompt = yield* SessionPrompt.Service
+                const sessions = yield* Session.Service
+                const chat = yield* sessions.create({ title: "Pinned" })
+
+                const oldUserID = MessageID.make("msg_ff_user")
+                const oldAssistantID = MessageID.make("msg_ff_assistant")
+                const newUserID = MessageID.make("msg_00_user")
+
+                yield* sessions.updateMessage({
+                  id: oldUserID,
+                  role: "user",
+                  sessionID: chat.id,
+                  agent: "build",
+                  model: ref,
+                  time: { created: 100 },
+                })
+                yield* sessions.updateMessage({
+                  id: oldAssistantID,
+                  role: "assistant",
+                  parentID: oldUserID,
+                  sessionID: chat.id,
+                  mode: "build",
+                  agent: "build",
+                  cost: 0,
+                  path: { cwd: "/tmp", root: "/tmp" },
+                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                  modelID: ref.modelID,
+                  providerID: ref.providerID,
+                  time: { created: 200, completed: 201 },
+                  finish: "stop",
+                })
+                yield* sessions.updateMessage({
+                  id: newUserID,
+                  role: "user",
+                  sessionID: chat.id,
+                  agent: "build",
+                  model: ref,
+                  time: { created: 300 },
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: newUserID,
+                  sessionID: chat.id,
+                  type: "text",
+                  text: "continue after wrap",
+                })
+
+                yield* llm.text("world after wrap")
+
+                const result = yield* prompt.loop({ sessionID: chat.id })
+
+                expect(yield* llm.hits).toHaveLength(1)
+                expect(result.info.role).toBe("assistant")
+                if (result.info.role === "assistant") expect(result.info.parentID).toBe(newUserID)
+                expect(result.parts.some((part) => part.type === "text" && part.text === "world after wrap")).toBe(true)
+              }),
+              { git: true, config: providerCfg },
+            ),
+          )
+
+          '''
+              tests = tests.replace(marker, block + marker, 1)
+              test_path.write_text(tests, encoding="utf-8")
+
+          workflow = Path(".github/workflows/backport-v1.14.48-message-id-wrap.yml")
+          if workflow.exists():
+              workflow.unlink()
+          PY
+
+      - name: Verify patch shape
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/opencode/src/session/prompt.ts packages/opencode/test/session/prompt.test.ts
+
+      - name: Commit backport
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(opencode): handle message ID wrap in session loop"
+          git push origin HEAD:fix/v1.14.48-message-id-wrap
