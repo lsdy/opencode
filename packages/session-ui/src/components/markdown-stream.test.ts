@@ -112,6 +112,20 @@ describe("markdown stream", () => {
     ])
   })
 
+  test("projects an open Mermaid fence for incremental rendering", () => {
+    const first = project(undefined, "```mermaid\nflowchart TB\n  App", true)
+    const next = project(first, `${first.text}[Desktop] --> UI[Session UI]`, true)
+
+    expect(next.blocks).toEqual([
+      {
+        raw: "```mermaid\nflowchart TB\n  App[Desktop] --> UI[Session UI]",
+        src: "flowchart TB\n  App[Desktop] --> UI[Session UI]",
+        mode: "code",
+        language: "mermaid",
+      },
+    ])
+  })
+
   test("preserves trailing newlines in open code fences", () => {
     expect(stream("```ts\nconst x = 1\n", true)).toEqual([
       {

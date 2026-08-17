@@ -187,6 +187,25 @@
     unicode-bidi: isolate;
   }
 
+  [data-component="markdown-mermaid"] {
+    margin: 12px 0 24px;
+    padding: 16px;
+    overflow: auto;
+    border: 0.5px solid var(--v2-border-border-base);
+    border-radius: 6px;
+    background: var(--v2-background-bg-layer-02);
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  [data-component="markdown-mermaid"] > svg {
+    display: block;
+    width: 100%;
+    min-width: 480px;
+    height: auto;
+    margin: 0 auto;
+  }
+
   [data-component="markdown-code"][data-code-kind="shell"] .shiki {
     background: var(--markdown-shell-code-background);
     border-color: var(--markdown-shell-code-border);
