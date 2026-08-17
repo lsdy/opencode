@@ -359,6 +359,69 @@ it.live("loop exits immediately when last assistant has stop finish", () =>
   ),
 )
 
+it.live("loop continues for newer user when message IDs wrap", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+
+      const oldUserID = MessageID.make("msg_ff_user")
+      const oldAssistantID = MessageID.make("msg_ff_assistant")
+      const newUserID = MessageID.make("msg_00_user")
+
+      yield* sessions.updateMessage({
+        id: oldUserID,
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        time: { created: 100 },
+      })
+      yield* sessions.updateMessage({
+        id: oldAssistantID,
+        role: "assistant",
+        parentID: oldUserID,
+        sessionID: chat.id,
+        mode: "build",
+        agent: "build",
+        cost: 0,
+        path: { cwd: "/tmp", root: "/tmp" },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: 200, completed: 201 },
+        finish: "stop",
+      })
+      yield* sessions.updateMessage({
+        id: newUserID,
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        time: { created: 300 },
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: newUserID,
+        sessionID: chat.id,
+        type: "text",
+        text: "continue after wrap",
+      })
+
+      yield* llm.text("world after wrap")
+
+      const result = yield* prompt.loop({ sessionID: chat.id })
+
+      expect(yield* llm.hits).toHaveLength(1)
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") expect(result.info.parentID).toBe(newUserID)
+      expect(result.parts.some((part) => part.type === "text" && part.text === "world after wrap")).toBe(true)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("loop calls LLM and returns assistant message", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
